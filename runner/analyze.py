@@ -10,9 +10,24 @@ from datetime import date, timedelta
 from urllib.parse import urlsplit
 
 UNPROMPTED = {"problem", "category", "alternative", "vertical", "trust"}
-NO_CITATIONS = {"gemini"}  # Gemini cites Google grounding redirects with no readable domain
+REDIRECT_HOSTS = {"vertexaisearch.cloud.google.com"}  # Gemini's grounding redirects: the source title holds the domain
+DOMAIN = re.compile(r"(?:[a-z0-9-]+\.)+[a-z]{2,}")
 COMMUNITY = {"reddit.com": "Reddit", "x.com": "X", "twitter.com": "X", "youtube.com": "video",
              "linkedin.com": "LinkedIn", "quora.com": "Quora", "medium.com": "blog platform"}
+
+LINK_LINE = re.compile(r"^[ \t]*\[[^\]\n]*\]\([^)\s]*\)[ \t]*$", re.M)
+LINK = re.compile(r"\[([^\]\n]*)\]\([^)\s]*\)")
+BARE_URL = re.compile(r"https?://\S+")
+SPLIT_ITEM = re.compile(r"[ \t]+-[ \t]*\n+\s*")
+BOLD = re.compile(r"\*\*([^*\n]{2,60}?)\*\*")
+# Words that open or close a bolded heading rather than a product name ("Best free options", "MCP servers").
+NOT_NAME_FIRST = {"a", "accuracy", "all", "an", "best", "bottom", "budget", "caution", "cheapest", "choosing", "cons",
+                  "considerations", "cost", "coverage", "data", "example", "for", "free", "freshness", "how", "if",
+                  "important", "key", "lean", "main", "most", "note", "option", "our", "overview", "paid", "practical",
+                  "pricing", "pros", "quick", "recommended", "similarities", "step", "summary", "the", "tip", "top",
+                  "use", "verdict", "warning", "what", "when", "why", "with", "yes", "no"}
+NOT_NAME_LAST = {"apis", "approach", "considerations", "guide", "options", "picks", "platforms", "recommendations",
+                 "servers", "setup", "stack", "tier", "tools", "workflow"}
 
 
 # --- normalising -----------------------------------------------------------
@@ -32,10 +47,35 @@ def domain_of(url: str) -> str:
 
 def on_domain(url: str, domains: list[str]) -> bool:
     d = domain_of(url)
-    return any(d == x.lower().removeprefix("www.") or d.endswith("." + x.lower().removeprefix("www.")) for x in domains)
+    return any(x and (d == x.lower().removeprefix("www.") or d.endswith("." + x.lower().removeprefix("www."))) for x in domains)
+
+
+def source_urls(sources: list[dict]) -> list[str]:
+    """Normalised source URLs. Gemini cites Google grounding redirects whose title is the real domain: that domain
+    is kept, and a redirect without one is dropped rather than counted as a citation of Google."""
+    out = []
+    for s in sources or []:
+        url = s.get("url") or ""
+        if domain_of(url) in REDIRECT_HOSTS:
+            title = (s.get("title") or "").strip().lower().removeprefix("www.")
+            if DOMAIN.fullmatch(title):
+                out.append(title)
+        elif url:
+            out.append(normalize_url(url))
+    return out
 
 
 # --- mentions --------------------------------------------------------------
+
+def prose(text: str) -> str:
+    """The answer as a reader sees it. ChatGPT puts unrelated page titles on lines of their own as citation links,
+    so those lines go; inline links keep their text; bare URLs go; and list items that stripped citations split
+    over two lines ("**Clay** - \\n\\nWaterfalls across...") are joined again."""
+    text = LINK_LINE.sub("", text or "")
+    text = LINK.sub(r"\1", text)
+    text = BARE_URL.sub("", text)
+    return SPLIT_ITEM.sub(" - ", text)
+
 
 def _sentences(text: str):
     """(start offset, sentence) pairs, split on sentence ends and line breaks."""
@@ -48,16 +88,19 @@ def _sentences(text: str):
 
 def first_mention(text: str, aliases: list[str], ambiguous: list[str], category_terms: list[str]) -> int | None:
     """Offset of the first mention of any alias. An ambiguous alias ("Copilot", "Spark") counts only in a
-    sentence that also names one of the category terms."""
+    sentence that also names one of the category terms, or written as a bolded name in a list ("**Spark**",
+    "**2. Spark MCP**"), with the capitals given in the config."""
     best = None
     terms = [t.lower() for t in category_terms]
     amb = {a.lower() for a in ambiguous}
     for alias in aliases:
         pattern = re.compile(r"(?<![\w-])" + re.escape(alias) + r"(?![\w-])", re.I)
         if alias.lower() in amb:
-            if not terms:
-                continue
-            for offset, sentence in _sentences(text):
+            bold = re.compile(r"\*\*\s*(?:\d+\.\s*)?" + re.escape(alias) + r"(?![\w-])(?:[ .][\w.+-]+){0,2}\s*\*\*")
+            m = bold.search(text)
+            if m and (best is None or m.start() < best):
+                best = m.start()
+            for offset, sentence in _sentences(text) if terms else ():
                 if any(t in sentence.lower() for t in terms):
                     m = pattern.search(sentence)
                     if m and (best is None or offset + m.start() < best):
@@ -71,8 +114,10 @@ def first_mention(text: str, aliases: list[str], ambiguous: list[str], category_
 
 
 def mentions(text: str, config: dict) -> dict[str, int]:
-    """{brand or competitor name: rank of first mention}, 1 = named first. The brand is keyed as its name."""
+    """{brand or competitor name: rank of first mention}, 1 = named first. The brand is keyed as its name.
+    Read on the prose: citation links and URLs do not count as mentions."""
     terms = config.get("category_terms", [])
+    text = prose(text)
     found = {}
     brand = config["brand"]
     off = first_mention(text, brand.get("aliases") or [brand["name"]], brand.get("ambiguous", []), terms)
@@ -83,6 +128,39 @@ def mentions(text: str, config: dict) -> dict[str, int]:
         if off is not None:
             found[c["name"]] = off
     return {name: rank for rank, (name, _) in enumerate(sorted(found.items(), key=lambda kv: kv[1]), 1)}
+
+
+def bold_names(text: str) -> set[str]:
+    """Product-like names an answer puts in bold ("**LeadMagic**", "**2. Hunter.io (free tier)**")."""
+    names = set()
+    for raw in BOLD.findall(prose(text)):
+        name = re.sub(r"^\d+\.\s*", "", raw)
+        name = re.sub(r"\s*\(.*$", "", name).strip(" -:.,")
+        words = name.split()
+        if (not words or len(words) > 3 or not (name[0].isupper() or name[0].isdigit()) or any(c in name for c in ",;/?!")
+                or words[0].lower() in NOT_NAME_FIRST or words[-1].lower() in NOT_NAME_LAST):
+            continue
+        names.add(name)
+    return names
+
+
+def untracked_names(answers: list[dict], config: dict, top: int = 10) -> list[tuple[str, int, list[str]]]:
+    """Names the assistants put in bold that are neither the brand nor a tracked competitor, kept when two
+    assistants or three answers give them: the candidates for competitors[]. (name, answers, assistants)."""
+    known = [config["brand"]["name"], *config["brand"].get("aliases", [])]
+    for c in config.get("competitors", []):
+        known += [c["name"], *c.get("aliases", [])]
+    known_re = [re.compile(r"(?<![\w-])" + re.escape(k) + r"(?![\w-])", re.I) for k in known if k]
+    count, by = Counter(), defaultdict(set)
+    for r in answers:
+        if r.get("status") != "succeeded":
+            continue
+        for name in bold_names(r.get("answer") or ""):
+            if not any(k.search(name) for k in known_re):
+                count[name] += 1
+                by[name].add(r["assistant"].partition(":")[0])
+    keep = [(n, c, sorted(by[n])) for n, c in count.items() if len(by[n]) >= 2 or c >= 3]
+    return sorted(keep, key=lambda x: (-len(x[2]), -x[1], x[0]))[:top]
 
 
 # --- rows ------------------------------------------------------------------
@@ -100,7 +178,7 @@ def answer_row(day: str, assistant: str, prompt: dict, panel_version: str, run: 
         return row
     text = result.get("answer") or ""
     named = mentions(text, config)
-    sources = [normalize_url(s.get("url", "")) for s in result.get("sources") or [] if s.get("url")]
+    sources = source_urls(result.get("sources"))
     row.update({
         "model": result.get("model"),
         "brand_named": brand["name"] in named,
@@ -167,8 +245,8 @@ def scoreboard(rows: list[dict], brand: str) -> dict[str, dict]:
         out[assistant] = {
             "answered": len(ok), "holes": len(rs) - len(ok), "named": len(named),
             "mention_rate": len(named) / len(ok) if ok else None,
-            "cited": None if assistant in NO_CITATIONS else len(cited),
-            "citation_rate": None if assistant in NO_CITATIONS or not ok else len(cited) / len(ok),
+            "cited": len(cited),
+            "citation_rate": len(cited) / len(ok) if ok else None,
             "share_of_voice": brand_mentions / all_mentions if all_mentions else None,
             "avg_rank": sum(ranks) / len(ranks) if ranks else None,
         }
@@ -220,9 +298,9 @@ def citation_graph(answers: list[dict], serps: list[dict], config: dict, top: in
     urls, domains = Counter(), Counter()
     cited_by = defaultdict(set)
     for r in answers:
-        if r["status"] != "succeeded" or r["assistant"] in NO_CITATIONS:
+        if r["status"] != "succeeded":
             continue
-        for u in set(r.get("sources") or []):
+        for u in {s for s in r.get("sources") or [] if domain_of(s) not in REDIRECT_HOSTS}:  # rows from 0.1 kept redirects
             urls[u] += 1
             domains[domain_of(u)] += 1
             cited_by[u].add(r["assistant"])
@@ -262,6 +340,16 @@ def scoreboard_table(now: dict, before: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+def untracked_section(answers: list[dict], config: dict) -> list[str]:
+    names = untracked_names(answers, config)
+    if not names:
+        return []
+    return ["", "## Named but not tracked", "",
+            "Bolded names in the answers that are not in `competitors[]`, given by two assistants or in three answers. "
+            "Add the real competitors to config.json: they then count in share of voice.", ""] + \
+           [f"- {n}: {c} answers ({', '.join(by)})" for n, c, by in names]
+
+
 def latest_report(day: str, answers: list[dict], serps: list[dict], config: dict, prompts: dict) -> str:
     brand = config["brand"]["name"]
     last7 = window(answers, day)
@@ -274,6 +362,7 @@ def latest_report(day: str, answers: list[dict], serps: list[dict], config: dict
            "## Who the assistants name, by prompt group", ""]
     for group, top in owners(last7, brand).items():
         out.append(f"- **{group}**: " + ", ".join(f"{n} ({c})" for n, c in top))
+    out += untracked_section(last7, config)
     out += ["", "## Most cited domains (7 days, plus AI Overviews from the last 4 weeks)", "",
             "| Domain | Citations | Type |", "|---|---|---|"]
     out += [f"| {d} | {n} | {t} |" for d, n, t in graph["domains"]]
@@ -298,6 +387,7 @@ def weekly_report(day: str, answers: list[dict], serps: list[dict], mentions_row
         out.append("")
     out += ["## Who owns each prompt group", ""]
     out += [f"- **{g}**: " + ", ".join(f"{n} ({c})" for n, c in top) for g, top in owners(last7, brand).items()]
+    out += untracked_section(last7, config)
     out += ["", "## Google results and AI Overviews", "",
             "| Query | AI Overview | Brand cited in it | Brand position |", "|---|---|---|---|"]
     for r in week_serps:

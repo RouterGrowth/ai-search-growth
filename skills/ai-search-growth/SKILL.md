@@ -13,7 +13,7 @@ description: >-
   cited, a press list, listings, or a Product Hunt launch plan.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
   author: RouterGrowth
   homepage: https://github.com/RouterGrowth/ai-search-growth
 ---
@@ -36,29 +36,40 @@ Read a module's reference file before running it: it has the exact calls, inputs
 
 ## Before you start
 
-1. **Connection.** If the RouterGrowth tools are not available, ask the user to connect RouterGrowth (sign in with OAuth and approve a workspace) and wait. Confirm access with the free `get_workspace_balance`.
+1. **Connection.** If the RouterGrowth tools are not available, ask the user to connect RouterGrowth (sign in with OAuth and approve a workspace) and wait. Confirm access with the free `get_workspace_balance` and tell the user the balance the calls will spend from (and the workspace, when the tool names it), so they can switch before anything is billed.
 2. **Config.** Look for `config.json` and `prompts.json` (next to this skill, in the working folder, or in the workspace tables named in the config). If there are none, run module 0 before any paid call. Never run module 1 on a panel you made up on the spot: the trend only means something on a saved panel.
-3. **Prices.** `get_operation_pricing` once per session for each tool before its first paid call. Figures in this skill are a guide and go stale. Set `max_cost` on every call from that price: for lookups (`contact_find`), the `max_cost_for_all`; for `aeo_answer`, the price of the assistant you call (they differ by up to 7x, and a cap below the dearest one silently drops that assistant).
-4. **Storage.** Inside the [ai-search-growth repo](https://github.com/RouterGrowth/ai-search-growth), `config.json` and `prompts.json` sit at the repo root and the runner writes `data/` (one jsonl file per day: `answers/`, `serp/`, `mentions/`, `runs/`, plus `summary.csv`) and `reports/` (`latest.md`, `weekly/<date>.md`); read and write the same files. Elsewhere, keep every run in one place: workspace tables if `list_tables` works (`create_table` with `key: "field:id"`, then `upsert_table_rows`, 500 rows a call), otherwise files under `data/` (`data/answers/<date>.jsonl`, `data/reports/<date>.md`). Without tables or a file system (a chat app), give the user the rows at the end of each run and say the trend cannot be kept that way.
+3. **Prices.** `get_operation_pricing` once per session for each tool before its first paid call. Figures in this skill are a guide and go stale. Set `max_cost` on every call from that price: for lookups (`contact_find`), the `max_cost_for_all`; for `aeo_answer`, the price of the assistant you call (they differ by up to 7x, and a cap below the dearest one silently drops that assistant); for `aeo_mentions`, the quote at its default 10 rows (`max_cost_for_all` is the one-row price, and a cap there gets the call refused).
+4. **Storage.** Inside the [ai-search-growth repo](https://github.com/RouterGrowth/ai-search-growth), `config.json` and `prompts.json` sit at the repo root and the runner writes `data/` (one jsonl file per day: `answers/`, `serp/`, `mentions/`, `runs/`, plus `summary.csv`) and `reports/` (`latest.md`, `weekly/<date>.md`); read and write the same files. Elsewhere, keep every run in one place: workspace tables if `list_tables` works (`create_table` with `key: "field:id"`, then `upsert_table_rows`, 500 rows a call), otherwise files under `data/` (`data/answers/<date>.jsonl`, `data/reports/<date>.md`). Without tables or a file system (a chat app), give the user the rows at the end of each run and say the trend cannot be kept that way. Every answer comes back through your context: for more than a few dozen answers (a baseline, a daily run), prefer the repo's runner, which writes the rows itself, and keep the tools for setup, small checks and modules 2 to 6.
 
 Every paid tool takes `{"input": {...}, "max_cost": "<cap>"}` and returns a receipt. When the receipt says the run is still going, wait on it with `get_run` (`run_id`, `wait`).
 
 ## Connected to the full server instead?
 
-The same skill runs on the full RouterGrowth server (`https://api.routergrowth.com/mcp`). There, each tool above is `run` with `capability` set to the dotted name (`aeo_answer` is `aeo.answer`), and three things get better:
+The same skill runs on the full RouterGrowth server (`https://api.routergrowth.com/mcp`, also what the RouterGrowth plugin connects). There, each paid tool above is `run` with `capability` set to the dotted name (`aeo_answer` is `aeo.answer`, `web_scrape` is `web.scrape`), and the free tools have other names:
+
+| This skill says | Full server |
+|---|---|
+| `get_workspace_balance` | `balance` |
+| `get_operation_pricing` | `inspect` |
+| `list_runs` | `runs` |
+| `get_run` | `get_run` |
+| `list_tables` | `tables` |
+| `create_table`, `upsert_table_rows` | `table_write` with `action: "create"` or `"upsert"` |
+| `create_*_watch`, `refresh_*_watch` | `watch` (a refresh passes `watch_id`) |
+| `submit_feedback` | `feedback` |
+
+Three things get better there:
 
 - `batch_run` sends a whole panel for one assistant in one call (`max_total_cost`, `idempotency_key`), instead of one call per prompt.
 - The raw DataForSEO endpoint `/v3/serp/google/organic/live/advanced` returns the AI Overview's **text** (which brands it names), not only its sources. See module 1.
 - Raw Apify actors add Product Hunt makers and directory scrapers. See modules 5 and 6.
-
-Use `inspect` instead of `get_operation_pricing` there, and `watch` instead of the `create_*_watch` tools.
 
 ## Budget rules
 
 - Quote a module before its first paid call; get a yes when the quote is above $1.
 - The scheduled runs are pre-approved up to `budgets.daily_usd` and `budgets.weekly_usd` in the config, which setup agrees with the user. Stop and ask before going above.
 - Pass an `idempotency_key` built from the brand slug, the date and the item (`acme-aeo-2026-10-28-chatgpt-p07`). A rerun the same day replays instead of billing twice.
-- Report the total charged at the end of every run, summed from the receipts (`billing.charged`) or `list_runs`, never from a wallet difference: the wallet is shared with every other agent on the workspace.
+- Report the total charged at the end of every run, summed from the receipts (`billing.charged`) or `list_runs` with each `run_id` counted once, never from a wallet difference: the wallet is shared with every other agent on the workspace. A batch that replays earlier items reports their charge again in its total.
 
 Typical spend for a 50-prompt panel (late October 2026; check the live price):
 
@@ -69,19 +80,21 @@ Typical spend for a 50-prompt panel (late October 2026; check the live price):
 | Setup | homepage read, 2 to 4 test answers, keyword volumes | under $1 |
 | Modules 2 to 6 | each | $1 to $5 |
 
-About $150 to $200 a month with two assistants daily and two weekly. Halve it by running the daily slice every other day; the 7-day trend is what gets reported. A smaller panel (20 to 30 prompts) scales the cost down in proportion.
+About $150 to $200 a month with two assistants daily and two weekly. Halve it by running the daily slice every other day; the 7-day trend is what gets reported. Tracking fewer prompts or assistants (`cadence.daily_prompts`, `cadence.weekly_prompts`, the assistant lists) scales the cost down in proportion.
 
 ## Run modes
 
 The user (or a scheduler) asks for one. Ask which when it is not clear.
 
 - **`setup`**: module 0. Writes the config and the panel, agrees the budget.
-- **`baseline`**: the first run. Whole panel on all four assistants, Google results with AI Overviews, AI mentions. Day zero: compare nothing yet.
+- **`baseline`**: the first run. Every tracked prompt on every tracked assistant, Google results with AI Overviews, AI mentions. Day zero: compare nothing yet.
 - **`daily`**: module 1, daily slice only. One short line per assistant.
 - **`weekly`**: module 1 weekly slice, Google results, AI mentions, every watch from modules 3 and 4 refreshed, then the weekly report.
 - **`module N`**: one module end to end.
 
-Scheduling: in the ai-search-growth repo, `daily` and `weekly` run without an agent: `python runner/track.py daily|weekly|baseline` on GitHub Actions (`.github/workflows/track.yml`), results committed to the repo. Run the same command locally when asked, or follow module 1 with the tools when the repo is not there. The agent's part is setup, reading the reports and modules 2 to 6. Outside the repo: a routine or cron calling the agent, or the user asking by hand.
+Any run can take a selection when the user asks for one ("only the category prompts", "just ChatGPT and Claude", "10 prompts", "on gpt-4.1"): prompts by id, group or range (`p01-p10`), assistants optionally pinned to a model (`claude:claude-sonnet-5-5`, its own series in the reports). With the runner: `--prompts` and `--assistants`. To change what the schedule tracks, edit `cadence` in the config with the user's yes and quote the new daily and weekly cost.
+
+Scheduling: in the ai-search-growth repo, `daily` and `weekly` run without an agent: `python runner/track.py daily|weekly|baseline [--prompts ...] [--assistants ...]` on GitHub Actions (`.github/workflows/track.yml`), results committed to the repo. Run the same command locally when asked, or follow module 1 with the tools when the repo is not there. The agent's part is setup, reading the reports and modules 2 to 6. Outside the repo: a routine or cron calling the agent, or the user asking by hand.
 
 ## Rules
 

@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "runner"))
 import analyze  # noqa: E402
+import track  # noqa: E402
 
 EM_DASH = chr(0x2014)
 
@@ -45,10 +46,84 @@ class Mentions(unittest.TestCase):
         self.assertEqual(analyze.mentions("Catch the next wave of growth. Wave is great.", CONFIG), {})
         self.assertEqual(analyze.mentions("Wave handles invoicing for free.", CONFIG), {"Wave": 1})
 
+    def test_ambiguous_alias_as_a_bolded_name(self):
+        # Claude splits list items where it strips citations: "**Wave** - \n\nFree for freelancers"
+        self.assertEqual(analyze.mentions("6. **Wave** - \n\nFree for freelancers.\n\n7. **QuickBooks** - \n\nThe default.", CONFIG),
+                         {"Wave": 1, "QuickBooks": 2})
+        self.assertEqual(analyze.mentions("**2. Wave Pro**: free for freelancers.", CONFIG), {"Wave": 1})
+        self.assertEqual(analyze.mentions("Ride the **wave** of growth.", CONFIG), {})
+
+    def test_citation_links_are_not_mentions(self):
+        # ChatGPT prints an unrelated page title as a link on its own line before each item
+        text = ("[QuickBooks Online review](https://example.com/qb?utm_source=openai)\n**Acme**  \n"
+                "Acme sends reminders. ([acme.io](https://acme.io/?utm_source=openai))")
+        self.assertEqual(analyze.mentions(text, CONFIG), {"Acme": 1})
+        self.assertEqual(analyze.mentions("See https://quickbooks.intuit.com/x for Acme invoicing.", CONFIG), {"Acme": 1})
+        self.assertEqual(analyze.mentions("Use [QuickBooks](https://quickbooks.intuit.com) for invoices.", CONFIG), {"QuickBooks": 1})
+
     def test_url_normalising(self):
         self.assertEqual(analyze.normalize_url("https://www.Acme.io/blog/?utm_source=openai#x"), "acme.io/blog")
         self.assertTrue(analyze.on_domain("https://app.acme.io/x", ["acme.io"]))
         self.assertFalse(analyze.on_domain("https://notacme.io/x", ["acme.io"]))
+        self.assertFalse(analyze.on_domain("https://acme.io/x", [""]))  # a competitor without a known domain
+
+    def test_gemini_sources_read_the_title(self):
+        redirect = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQ"
+        self.assertEqual(analyze.source_urls([{"url": redirect, "title": "www.Acme.io"}, {"url": redirect, "title": "A blog post"},
+                                              {"url": "https://g2.com/x?utm_source=openai"}]), ["acme.io", "g2.com/x"])
+
+
+class Selection(unittest.TestCase):
+    PANEL = [{"id": f"p{i:02d}", "group": g, "text": "x"} for i, g in
+             enumerate(["problem", "problem", "category", "alternative", "vertical", "brand"], 1)]
+
+    def ids(self, spec):
+        return [p["id"] for p in track.select_prompts(self.PANEL, spec)]
+
+    def test_prompts_by_id_group_and_range(self):
+        self.assertEqual(self.ids("all"), ["p01", "p02", "p03", "p04", "p05", "p06"])
+        self.assertEqual(self.ids(None), self.ids("all"))
+        self.assertEqual(self.ids("p05,problem"), ["p01", "p02", "p05"])  # panel order kept
+        self.assertEqual(self.ids(["p02-p04"]), ["p02", "p03", "p04"])
+        for bad in ("p99", "pricing", "p40-p50"):
+            with self.assertRaises(ValueError):
+                self.ids(bad)
+
+    def test_assistants_and_models(self):
+        self.assertEqual(track.parse_assistants("chatgpt, Claude:claude-sonnet-5-5,chatgpt"),
+                         ["chatgpt", "claude:claude-sonnet-5-5"])
+        with self.assertRaises(ValueError):
+            track.parse_assistants("copilot")
+
+    def test_plan_uses_the_cadence_and_the_overrides(self):
+        config = {**CONFIG, "serp_queries": ["q"], "cadence": {
+            "daily_assistants": ["chatgpt"], "weekly_assistants": ["claude"],
+            "daily_prompts": ["p01-p02"], "weekly_prompts": "all"}}
+        daily = track.plan("daily", config, self.PANEL)
+        self.assertEqual(([p["id"] for p in daily["prompts"]], daily["assistants"], daily["serp_queries"]),
+                         (["p01", "p02"], ["chatgpt"], []))
+        base = track.plan("baseline", config, self.PANEL)
+        self.assertEqual((len(base["prompts"]), base["assistants"]), (6, ["chatgpt", "claude"]))
+        one = track.plan("weekly", config, self.PANEL, 1, "category,vertical", "gemini")
+        self.assertEqual(([p["id"] for p in one["prompts"]], one["assistants"]), (["p03"], ["gemini"]))
+
+    def test_price_covers_the_default_limit(self):
+        mentions = {"waterfall": {"max_cost_for_all": {"amount": "0.202"}}, "offers": [
+            {"executable": True, "pricing": {"base": "0.2", "per_result": "0.002", "default_limit": 10}}]}
+        self.assertEqual(track.price_of(mentions), 0.22)
+        serp = {"waterfall": {"max_cost_for_all": {"amount": "0.007"}}, "offers": [
+            {"executable": True, "pricing": {"base": "0.004", "per_result": "0", "default_limit": 10}},
+            {"executable": True, "pricing": {"by_platform": {"*": {"base": "0.007"}}}}]}
+        self.assertEqual(track.price_of(serp), 0.007)
+
+
+class Untracked(unittest.TestCase):
+    def test_bolded_names_not_tracked(self):
+        texts = {"chatgpt": "**1. FreshBooks** - fast.\n**QuickBooks** - default.\n**Best free options**",
+                 "claude:claude-sonnet-5-5": "Try **FreshBooks (free tier)** or **Acme Invoices**.",
+                 "gemini": "**Zoho Invoice** and **Coverage**:"}
+        answers = [analyze.answer_row("2026-10-28", a, PROMPTS["prompts"][0], "v1", run(t), CONFIG) for a, t in texts.items()]
+        self.assertEqual(analyze.untracked_names(answers, CONFIG), [("FreshBooks", 2, ["chatgpt", "claude"])])
 
 
 class Rows(unittest.TestCase):
@@ -77,6 +152,9 @@ class Metrics(unittest.TestCase):
             analyze.answer_row("2026-10-28", "chatgpt", p[2], "v1", run("Acme is fine."), CONFIG),  # brand group: ignored
             analyze.answer_row("2026-10-28", "gemini", p[0], "v1", run("Acme.", ["https://vertexaisearch.cloud.google.com/x"]), CONFIG),
             analyze.answer_row("2026-10-28", "gemini", p[1], "v1", {"status": "failed"}, CONFIG),
+            analyze.answer_row("2026-10-28", "gemini", p[0], "v1", {"run_id": "run_g", "status": "succeeded", "result": {
+                "answer": "Acme for invoicing.", "sources": [{"url": "https://vertexaisearch.cloud.google.com/y", "title": "acme.io"}]}},
+                CONFIG) | {"date": "2026-10-27"},
         ]
 
     def test_scoreboard(self):
@@ -86,7 +164,8 @@ class Metrics(unittest.TestCase):
         self.assertEqual(s["chatgpt"]["mention_rate"], 0.5)
         self.assertEqual(s["chatgpt"]["citation_rate"], 0.5)
         self.assertEqual(s["chatgpt"]["share_of_voice"], 0.5)
-        self.assertIsNone(s["gemini"]["citation_rate"])  # Gemini sources are redirects
+        self.assertEqual(s["gemini"]["cited"], 1)  # the redirect titled acme.io counts, the untitled one does not
+        self.assertEqual(s["gemini"]["citation_rate"], 0.5)
         self.assertEqual(s["gemini"]["holes"], 1)
 
     def test_movers(self):

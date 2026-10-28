@@ -41,8 +41,15 @@ class FakeAPI(BaseHTTPRequestHandler):
             if cap == "aeo.answer":
                 return self._send(200, {"offers": [{"executable": True, "pricing": {"by_platform": {
                     a: {"base": p, "per_result": "0"} for a, p in PRICES.items()}}}]})
-            return self._send(200, {"waterfall": {"max_cost_for_all": {"amount": "0.007" if cap == "seo.serp" else "0.202"}}})
+            if cap == "seo.serp":
+                return self._send(200, {"waterfall": {"max_cost_for_all": {"amount": "0.007"}}})
+            # aeo.mentions, as the live API answers it: max_cost_for_all is the one-row price, a call quotes 10 rows
+            return self._send(200, {"waterfall": {"max_cost_for_all": {"amount": "0.202"}}, "offers": [
+                {"executable": True, "pricing": {"base": "0.2", "per_result": "0.002", "default_limit": 10}}]})
         cap, inp = body["capability"], body["input"]
+        if cap == "aeo.mentions" and float(body["routing"]["max_cost"]) < 0.22:
+            return self._send(402, {"run_id": "run_refused", "status": "failed", "done": True, "error": {
+                "code": "cost_limit_exceeded", "message": "dataforseo quotes $0.22 for this call, above max_cost"}})
         if cap == "aeo.answer":
             if inp["assistant"] == "claude" and "chasing" in inp["prompt"]:
                 return self._send(202, {"run_id": "run_slow", "status": "running", "done": False})
@@ -119,7 +126,8 @@ class EndToEnd(unittest.TestCase):
             hole = next(r for r in rows if r["id"] == "2026-10-26|gemini|p02")
             self.assertEqual(hole["error"], "provider_error")
             mention = json.loads((root / "data/mentions/2026-10-26.jsonl").read_text().splitlines()[0])
-            self.assertEqual((mention["status"], mention["total"]), ("no_match", 0))
+            self.assertEqual((mention["status"], mention["total"]), ("no_match", 0))  # not refused at the one-row price
+            self.assertNotIn("stopped early", out.stdout)
             receipt = json.loads((root / "data/runs/2026-10-26-weekly.json").read_text())
             self.assertEqual(receipt["answer_holes"], 1)
             report = (root / "reports/weekly/2026-10-26.md").read_text()
@@ -141,7 +149,27 @@ class EndToEnd(unittest.TestCase):
             out = self.track(Path(d), "weekly", config={**CONFIG, "budgets": {"weekly_usd": 0.1}})
             self.assertEqual(out.returncode, 1)
             self.assertIn("above budgets.weekly_usd", out.stdout)
+            out = self.track(Path(d), "weekly", "--limit", "500", config={**CONFIG, "budgets": {"weekly_usd": 0.1}})
+            self.assertEqual(out.returncode, 1)  # --limit no longer bypasses the budget
             self.assertFalse([c for c in FakeAPI.calls if c["path"] == "/v1/run"])
+
+    def test_selected_prompts_and_pinned_model(self):
+        FakeAPI.calls = []
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            out = self.track(root, "daily", "--prompts", "alternative", "--assistants", "claude:claude-sonnet-5-5")
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            self.assertIn("1 prompts (p02)", out.stdout)
+            runs = [c for c in FakeAPI.calls if c["path"] == "/v1/run"]
+            self.assertEqual([c["body"]["input"] for c in runs], [{"prompt": PROMPTS["prompts"][1]["text"], "assistant": "claude",
+                                                                   "model": "claude-sonnet-5-5", "location": "GB"}])
+            self.assertEqual(runs[0]["body"]["routing"]["max_cost"], "0.138000")
+            self.assertEqual(runs[0]["key"], "acme-aeo-2026-10-26-claude-claude-sonnet-5-5-p02")
+            rows = [json.loads(x) for x in (root / "data/answers/2026-10-26.jsonl").read_text().splitlines()]
+            self.assertEqual([r["id"] for r in rows], ["2026-10-26|claude:claude-sonnet-5-5|p02"])
+            out = self.track(root, "daily", "--prompts", "pricing")
+            self.assertEqual(out.returncode, 1)
+            self.assertIn("unknown prompt, group or range 'pricing'", out.stdout)
 
 
 if __name__ == "__main__":

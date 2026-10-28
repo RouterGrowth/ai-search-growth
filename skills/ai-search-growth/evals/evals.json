@@ -9,7 +9,9 @@
         "Runs module 0 first when no config or panel exists: reads the site with web_scrape and writes config.json and prompts.json",
         "Writes 30 to 50 prompts in the problem, category, alternative, vertical, trust and brand groups, with at most three brand prompts",
         "Quotes the daily and weekly cost from get_operation_pricing and agrees the budget before the baseline",
-        "Sets max_cost on every paid call"
+        "Sets max_cost on every paid call",
+        "Asks one Perplexity prompt in the buyer's problem words, not only category prompts, to find competitors",
+        "Shows the brand draft and the competitor list together before writing prompts, and agrees which prompts and assistants to track at the budget step"
       ],
       "files": []
     },
@@ -65,6 +67,18 @@
       "should_trigger": false,
       "assertions": [
         "Does not post, comment or vote"
+      ],
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "run the tracking on 10 prompts only, on ChatGPT and Claude, and use claude-sonnet-5-5",
+      "should_trigger": true,
+      "assertions": [
+        "Picks 10 prompts spread across the groups (or the ones the user names) and keeps the panel order",
+        "Sends only chatgpt and claude, with model claude-sonnet-5-5 on the Claude calls, recorded as the series claude:claude-sonnet-5-5",
+        "Quotes the selection before running and asks for a yes above $1",
+        "In the repo, uses runner/track.py with --prompts and --assistants rather than copying answers by hand"
       ],
       "files": []
     }
