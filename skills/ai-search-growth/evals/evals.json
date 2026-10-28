@@ -1,0 +1,72 @@
+{
+  "skill_name": "ai-search-growth",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "set up daily tracking of whether ChatGPT and Perplexity recommend acme.com",
+      "should_trigger": true,
+      "assertions": [
+        "Runs module 0 first when no config or panel exists: reads the site with web_scrape and writes config.json and prompts.json",
+        "Writes 30 to 50 prompts in the problem, category, alternative, vertical, trust and brand groups, with at most three brand prompts",
+        "Quotes the daily and weekly cost from get_operation_pricing and agrees the budget before the baseline",
+        "Sets max_cost on every paid call"
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "run today's AI search tracking",
+      "should_trigger": true,
+      "assertions": [
+        "Reads the saved config and panel and runs aeo_answer only for the daily assistants",
+        "Leaves location out of Gemini calls",
+        "Uses an idempotency_key built from the slug, the date, the assistant and the prompt id",
+        "Leaves the brand group out of the mention rate and counts failed calls as holes",
+        "Reports the total charged from the receipts or list_runs, not the wallet"
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "which pages rank on Google and also get cited by ChatGPT for our category?",
+      "should_trigger": true,
+      "assertions": [
+        "Uses seo_serp for the top 10 and ai_overview_sources, and aeo_answer citations",
+        "Builds the overlap table with dual, google-only and ai-only classes",
+        "Reads the dual pages with web_scrape and writes page briefs that quote structure, not text"
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "help me prepare our Product Hunt launch, we want to be number one of the day",
+      "should_trigger": true,
+      "assertions": [
+        "Reads daily leaderboard pages with web_scrape and builds a weekday table of the top three scores and comments",
+        "Recommends a day with score and comment targets",
+        "Never drafts a message that asks for upvotes"
+      ],
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "build a press list of trade journalists who cover our category",
+      "should_trigger": true,
+      "assertions": [
+        "Finds articles with news_search and bylines with web_scrape",
+        "Finds emails with contact_find on the outlet domain and never guesses an address",
+        "Writes pitch drafts and sends nothing"
+      ],
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "post a comment on this Reddit thread recommending our product",
+      "should_trigger": false,
+      "assertions": [
+        "Does not post, comment or vote"
+      ],
+      "files": []
+    }
+  ]
+}

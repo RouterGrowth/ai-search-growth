@@ -1,0 +1,135 @@
+{
+  "brand": {
+    "name": "<Product name>",
+    "slug": "<product-slug>",
+    "aliases": [
+      "<Product name>",
+      "<Company name if different>"
+    ],
+    "domains": [
+      "<product-domain.com>"
+    ],
+    "one_liner": "<What it does, for whom, how, in one or two sentences>",
+    "claims": [
+      "<integration or platform>",
+      "<data hosting or compliance>",
+      "<pricing model>"
+    ],
+    "notes": "<Anything a later run must know, e.g. where the comparison pages live>"
+  },
+  "competitors": [
+    {
+      "name": "<Competitor A>",
+      "aliases": [
+        "<Competitor A>"
+      ],
+      "domain": "<competitor-a.com>",
+      "ambiguous": []
+    },
+    {
+      "name": "<Competitor B>",
+      "aliases": [
+        "<Competitor B>",
+        "<B short name>"
+      ],
+      "domain": "<competitor-b.com>",
+      "ambiguous": [
+        "<B short name>"
+      ]
+    }
+  ],
+  "market": {
+    "country": "United States",
+    "aeo_location": "US",
+    "serp_location": "United States",
+    "language": "en"
+  },
+  "verticals": [
+    "<buyer industry or role 1>",
+    "<buyer industry or role 2>"
+  ],
+  "category_terms": [
+    "<word that marks the category, e.g. invoice>",
+    "<platform it plugs into>"
+  ],
+  "cadence": {
+    "daily_assistants": [
+      "chatgpt",
+      "perplexity"
+    ],
+    "weekly_assistants": [
+      "claude",
+      "gemini"
+    ],
+    "weekly_day": "Monday"
+  },
+  "budgets": {
+    "daily_usd": 6,
+    "weekly_usd": 18,
+    "baseline_usd": 22,
+    "one_off_ask_above_usd": 1
+  },
+  "serp_queries": [
+    "<competitor a> alternative",
+    "best <category>",
+    "<category> for <vertical>",
+    "<problem in search words>"
+  ],
+  "watches": {
+    "reddit": [
+      "<problem as people post it>",
+      "<competitor a> alternative"
+    ],
+    "x": [
+      "<category>",
+      "<competitor a> alternative"
+    ],
+    "news": [
+      "<vertical> <problem>",
+      "<competitor a>"
+    ]
+  },
+  "press": {
+    "outlets": [
+      {
+        "name": "<Trade title>",
+        "vertical": "<vertical>",
+        "domain": "<trade-title.com>"
+      }
+    ]
+  },
+  "listings": {
+    "marketplaces": [
+      {
+        "name": "<App marketplace the product installs from>",
+        "search_urls": [
+          "<search URL for the category words>"
+        ]
+      }
+    ],
+    "directories": [
+      {
+        "name": "There's An AI For That",
+        "search_urls": [
+          "https://theresanaiforthat.com/s/<category+words>/"
+        ]
+      }
+    ]
+  },
+  "product_hunt": {
+    "match": [
+      "<topic or tagline word>",
+      "<topic or tagline word>"
+    ],
+    "launch_date": null
+  },
+  "tables": {
+    "answers": "<product-slug>-ai-answers",
+    "threads": "<product-slug>-threads",
+    "press": "<product-slug>-press",
+    "listings": "<product-slug>-listings"
+  },
+  "runner": {
+    "concurrency": 4
+  }
+}

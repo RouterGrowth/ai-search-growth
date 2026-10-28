@@ -1,0 +1,53 @@
+name: track
+# Daily at 06:00 UTC: the panel on the daily assistants. Mondays at 06:30 UTC: the weekly slice and report.
+# Results are committed back to the repo, so the history is the trend.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+    - cron: "30 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "daily, weekly, baseline (the first run) or report (rebuild reports, no calls)"
+        type: choice
+        options: [daily, weekly, baseline, report]
+        default: baseline
+      limit:
+        description: "Only the first N prompts (a cheap test). Empty for the whole panel."
+        required: false
+permissions:
+  contents: write
+concurrency:
+  group: track
+  cancel-in-progress: false
+jobs:
+  track:
+    # The template itself has no key and no config: only copies of it track.
+    if: github.repository != 'RouterGrowth/ai-search-growth'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pick the mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "30 6 * * 1" ]; then echo "mode=weekly" >> "$GITHUB_OUTPUT"
+          else echo "mode=daily" >> "$GITHUB_OUTPUT"; fi
+      - name: Run
+        env:
+          ROUTERGROWTH_API_KEY: ${{ secrets.ROUTERGROWTH_API_KEY }}
+        run: |
+          LIMIT="${{ inputs.limit }}"
+          python runner/track.py "${{ steps.mode.outputs.mode }}" ${LIMIT:+--limit "$LIMIT"}
+      - name: Commit the results
+        run: |
+          git config user.name "ai-search-growth"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data reports
+          if git diff --cached --quiet; then echo "nothing new"; exit 0; fi
+          git commit -m "track: ${{ steps.mode.outputs.mode }} $(date -u +%F)"
+          git pull --rebase --quiet && git push

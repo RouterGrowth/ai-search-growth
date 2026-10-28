@@ -1,0 +1,14 @@
+{
+  "version": "v1",
+  "created": "<YYYY-MM-DD>",
+  "market": "<country>",
+  "note": "Frozen panel. Never edit a prompt in place: add v2 with new ids. Module 0 writes 30 to 50 prompts; these show one per group.",
+  "prompts": [
+    {"id": "p01", "group": "problem", "text": "<The pain in the buyer's own words, no product named. E.g. I spend half my week chasing clients for documents. What can I do?>"},
+    {"id": "p02", "group": "category", "text": "<What is the best <category> for <platform or team size>?>"},
+    {"id": "p03", "group": "alternative", "text": "<What are the best <Competitor A> alternatives?>"},
+    {"id": "p04", "group": "vertical", "text": "<What is the best <category> for <vertical> in <country>?>"},
+    {"id": "p05", "group": "trust", "text": "<Which <category> tools <claim a buyer checks, e.g. are hosted in the EU>?>"},
+    {"id": "p06", "group": "brand", "text": "<What is <Product name> and is it any good?>"}
+  ]
+}
