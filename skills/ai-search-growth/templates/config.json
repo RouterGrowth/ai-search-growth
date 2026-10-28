@@ -61,7 +61,9 @@
       "claude",
       "gemini"
     ],
-    "weekly_day": "Monday"
+    "weekly_day": "Monday",
+    "daily_prompts": "all",
+    "weekly_prompts": "all"
   },
   "budgets": {
     "daily_usd": 6,

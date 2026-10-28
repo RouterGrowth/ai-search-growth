@@ -23,7 +23,7 @@ class Client:
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.base + path, data=data, method=method, headers={
             "Authorization": f"Bearer {self.key}", "Content-Type": "application/json",
-            "User-Agent": "ai-search-growth-runner/0.1", **(headers or {})})
+            "User-Agent": "ai-search-growth-runner/0.2", **(headers or {})})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 return json.loads(r.read() or b"{}")

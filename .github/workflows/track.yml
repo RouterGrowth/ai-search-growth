@@ -12,8 +12,14 @@ on:
         type: choice
         options: [daily, weekly, baseline, report]
         default: baseline
+      prompts:
+        description: "Prompt ids, groups or ranges, e.g. p01-p10,category. Empty: the cadence's prompts in config.json."
+        required: false
+      assistants:
+        description: "e.g. chatgpt,perplexity or claude:claude-sonnet-5-5 to pin a model. Empty: the cadence's assistants."
+        required: false
       limit:
-        description: "Only the first N prompts (a cheap test). Empty for the whole panel."
+        description: "Only the first N prompts of the selection (a cheap test). Empty for all of them."
         required: false
 permissions:
   contents: write
@@ -40,9 +46,12 @@ jobs:
       - name: Run
         env:
           ROUTERGROWTH_API_KEY: ${{ secrets.ROUTERGROWTH_API_KEY }}
+          MODE: ${{ steps.mode.outputs.mode }}
+          PROMPTS: ${{ inputs.prompts }}
+          ASSISTANTS: ${{ inputs.assistants }}
+          LIMIT: ${{ inputs.limit }}
         run: |
-          LIMIT="${{ inputs.limit }}"
-          python runner/track.py "${{ steps.mode.outputs.mode }}" ${LIMIT:+--limit "$LIMIT"}
+          python runner/track.py "$MODE" ${PROMPTS:+--prompts "$PROMPTS"} ${ASSISTANTS:+--assistants "$ASSISTANTS"} ${LIMIT:+--limit "$LIMIT"}
       - name: Commit the results
         run: |
           git config user.name "ai-search-growth"
